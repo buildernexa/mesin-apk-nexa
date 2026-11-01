@@ -24,7 +24,7 @@ on:
 
 jobs:
   build:
-    name: Build & Sign APK (Stable Wrapper)
+    name: Build & Release APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -36,76 +36,70 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Generate Stable Android Project
+      - name: Buat Proyek Android dengan Python (Anti-Error)
+        env:
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          APP_ID: ${{ github.event.inputs.app_id }}
+          VERSION_NAME: ${{ github.event.inputs.version_name }}
+          VERSION_CODE: ${{ github.event.inputs.version_code }}
+          TARGET_URL: ${{ github.event.inputs.target_url }}
         run: |
-          mkdir -p stable-app/app/src/main/java/com/nexa/browser
-          mkdir -p stable-app/app/src/main/res/values
-          mkdir -p stable-app/app/src/main/res/mipmap-hdpi
-          
-          cd stable-app
-          
-          echo "include ':app'" > settings.gradle
-          
-          cat << 'EOF' > build.gradle
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:7.4.2'
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          task clean(type: Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
+          python3 -c '
+          import os, json
 
-          cat << 'EOF' > app/build.gradle
-          plugins {
-              id 'com.android.application'
+          app_name = os.environ["APP_NAME"]
+          app_id = os.environ["APP_ID"]
+          v_name = os.environ["VERSION_NAME"]
+          v_code = os.environ["VERSION_CODE"]
+          target_url = os.environ["TARGET_URL"] or "https://google.com"
+
+          # Buat struktur folder
+          os.makedirs("app/src/main/java/com/nexa/browser", exist_ok=True)
+          os.makedirs("app/src/main/res/values", exist_ok=True)
+          os.makedirs("app/src/main/res/mipmap-hdpi", exist_ok=True)
+          os.makedirs("app/src/main/assets", exist_ok=True)
+
+          with open("settings.gradle", "w") as f:
+              f.write("include \x27:app\x27\n")
+
+          with open("build.gradle", "w") as f:
+              f.write("""
+          buildscript {
+              repositories { google(); mavenCentral() }
+              dependencies { classpath \x27com.android.tools.build:gradle:7.4.2\x27 }
           }
-          android {
+          allprojects { repositories { google(); mavenCentral() } }
+          task clean(type: Delete) { delete rootProject.buildDir }
+          """)
+
+          with open("app/build.gradle", "w") as f:
+              f.write(f"""
+          plugins { id \x27com.android.application\x27 }
+          android {{
               compileSdk 33
-              defaultConfig {
-                  applicationId "${{ github.event.inputs.app_id }}"
+              defaultConfig {{
+                  applicationId "{app_id}"
                   minSdk 21
                   targetSdk 33
-                  versionCode ${{ github.event.inputs.version_code }}
-                  versionName "${{ github.event.inputs.version_name }}"
-              }
-              buildTypes {
-                  release {
+                  versionCode {v_code}
+                  versionName "{v_name}"
+              }}
+              buildTypes {{
+                  release {{
                       minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                  }
-              }
-          }
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.6.1'
-          }
-          EOF
+                      proguardFiles getDefaultProguardFile(\x27proguard-android-optimize.txt\x27), \x27proguard-rules.pro\x27
+                  }}
+              }}
+          }}
+          dependencies {{ implementation \x27androidx.appcompat:appcompat:1.6.1\x27 }}
+          """)
 
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="${{ github.event.inputs.app_id }}">
+          with open("app/src/main/AndroidManifest.xml", "w") as f:
+              f.write(f"""<?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{app_id}">
               <uses-permission android:name="android.permission.INTERNET" />
-              <application
-                  android:allowBackup="true"
-                  android:icon="@mipmap/ic_launcher"
-                  android:label="${{ github.event.inputs.app_name }}"
-                  android:roundIcon="@mipmap/ic_launcher_round"
-                  android:usesCleartextTraffic="true"
-                  android:theme="@style/Theme.AppCompat.NoActionBar">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
+              <application android:allowBackup="true" android:label="{app_name}" android:usesCleartextTraffic="true" android:theme="@style/Theme.AppCompat.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -113,67 +107,50 @@ jobs:
                   </activity>
               </application>
           </manifest>
-          EOF
+          """)
 
-          TARGET_URL="${{ github.event.inputs.target_url }}"
-          if [ -z "$TARGET_URL" ]; then
-            TARGET_URL="https://google.com"
-          fi
-
-          cat << EOF > app/src/main/java/com/nexa/browser/MainActivity.java
+          with open("app/src/main/java/com/nexa/browser/MainActivity.java", "w") as f:
+              f.write(f"""
           package com.nexa.browser;
           import android.os.Bundle;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
           import androidx.appcompat.app.AppCompatActivity;
-
-          public class MainActivity extends AppCompatActivity {
+          public class MainActivity extends AppCompatActivity {{
               @Override
-              protected void onCreate(Bundle savedInstanceState) {
+              protected void onCreate(Bundle savedInstanceState) {{
                   super.onCreate(savedInstanceState);
                   WebView webView = new WebView(this);
                   webView.getSettings().setJavaScriptEnabled(true);
                   webView.getSettings().setDomStorageEnabled(true);
                   webView.setWebViewClient(new WebViewClient());
-                  webView.loadUrl("$TARGET_URL");
+                  webView.loadUrl("{target_url}");
                   setContentView(webView);
-              }
-          }
-          EOF
+              }}
+          }}
+          """)
+          '
 
-          echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#000" android:pathData="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2Z"/></vector>' > app/src/main/res/mipmap-hdpi/ic_launcher.xml
-          cp app/src/main/res/mipmap-hdpi/ic_launcher.xml app/src/main/res/mipmap-hdpi/ic_launcher_round.xml
-
-          # Generate Gradle Wrapper secara otomatis agar build tidak pernah missing dependency
           gradle wrapper
 
-      - name: Build Release APK via Gradle Wrapper
+      - name: Build APK via Gradle
         run: |
-          cd stable-app
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Zipalign APK
+      - name: Zipalign & Sign APK
         run: |
-          cd stable-app/app/build/outputs/apk/release
+          cd app/build/outputs/apk/release
           $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 app-release-unsigned.apk app-aligned.apk
-
-      - name: Generate Keystore
-        run: |
-          cd stable-app/app/build/outputs/apk/release
-          keytool -genkey -v -keystore release.keystore -alias nexa_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=${{ github.event.inputs.app_name }}, OU=NexaBuild, O=Nexa, L=Jakarta, ST=Jakarta, C=ID"
-
-      - name: Sign APK
-        run: |
-          cd stable-app/app/build/outputs/apk/release
+          keytool -genkey -v -keystore release.keystore -alias nexa_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Nexa, O=Nexa, C=ID"
           $ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner sign --ks release.keystore --ks-key-alias nexa_alias --ks-pass pass:password --key-pass pass:password --out app-release.apk app-aligned.apk
 
-      - name: Create Release & Upload APK
+      - name: Upload Release APK
         uses: softprops/action-gh-release@v1
         with:
           tag_name: "v${{ github.event.inputs.version_name }}-${{ github.run_id }}"
           name: "${{ github.event.inputs.app_name }} v${{ github.event.inputs.version_name }}"
-          body: "Build Berhasil!\nTarget URL: ${{ github.event.inputs.target_url }}"
-          files: stable-app/app/build/outputs/apk/release/app-release.apk
+          body: "APK siap diinstal langsung dari halaman rilis."
+          files: app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
