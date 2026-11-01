@@ -24,74 +24,155 @@ on:
 
 jobs:
   build:
-    name: Build & Sign APK (Anti-Error)
+    name: Build & Sign APK (Direct Engine)
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
       - name: Setup Java JDK 17
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Create Capacitor Android Project
+      - name: Buat Struktur Proyek Android Native
         run: |
-          mkdir engine-app && cd engine-app
-          npm init -y
-          npm install @capacitor/cli @capacitor/core @capacitor/android
-          npx cap init "${{ github.event.inputs.app_name }}" "${{ github.event.inputs.app_id }}" --web-dir www
-          mkdir www
+          # Membuat kerangka proyek Android standar tanpa bergantung pada CLI pihak ketiga
+          mkdir -p native-app/app/src/main/java/com/nexa/app
+          mkdir -p native-app/app/src/main/assets
+          mkdir -p native-app/app/src/main/res/values
+          mkdir -p native-app/app/src/main/res/mipmap-hdpi
           
-          # Injeksi URL Target
-          if [ "${{ github.event.inputs.target_url }}" != "" ]; then
-            node -e "
-              const fs = require('fs');
-              let cfg = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
-              cfg.server = { url: '${{ github.event.inputs.target_url }}', cleartext: true };
-              fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
-            "
-            echo "<html><body style='background:#fff;color:#000;'>Memuat ${ { github.event.inputs.app_name } }...</body></html>" > www/index.html
-          else
-            echo "<html><body>Menunggu Konfigurasi...</body></html>" > www/index.html
+          cd native-app
+          
+          # Buat settings.gradle
+          echo "include ':app'" > settings.gradle
+          
+          # Buat root build.gradle
+          cat << 'EOF' > build.gradle
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:7.4.2'
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          task clean(type: Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+
+          # Buat app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              compileSdk 33
+              defaultConfig {
+                  applicationId "${{ github.event.inputs.app_id }}"
+                  minSdk 21
+                  targetSdk 33
+                  versionCode ${{ github.event.inputs.version_code }}
+                  versionName "${{ github.event.inputs.version_name }}"
+              }
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+          }
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.8.0'
+          }
+          EOF
+
+          # Buat AndroidManifest.xml dengan izin akses internet penuh untuk WebView
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="${{ github.event.inputs.app_id }}">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="${{ github.event.inputs.app_name }}"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:usesCleartextTraffic="true"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.AppCompat.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # Buat MainActivity.java yang langsung meload URL target Anda ke dalam WebView
+          TARGET_URL="${{ github.event.inputs.target_url }}"
+          if [ -z "$TARGET_URL" ]; then
+            TARGET_URL="https://google.com"
           fi
-          
-          # Tambahkan platform Android dan lakukan SINKRONISASI (Celah Error Diperbaiki)
-          npx cap add android
-          npx cap sync android
 
-      - name: Inject Version Data
-        run: |
-          cd engine-app/android/app
-          sed -i "s/versionCode 1/versionCode ${{ github.event.inputs.version_code }}/g" build.gradle
-          sed -i "s/versionName \"1.0\"/versionName \"${{ github.event.inputs.version_name }}\"/g" build.gradle
+          cat << EOF > app/src/main/java/com/nexa/app/MainActivity.java
+          package com.nexa.app;
+          import android.os.Bundle;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import androidx.appcompat.app.AppCompatActivity;
 
-      - name: Compile Release APK (Gradle)
+          public class MainActivity extends AppCompatActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  WebView webView = new WebView(this);
+                  webView.getSettings().setJavaScriptEnabled(true);
+                  webView.getSettings().setDomStorageEnabled(true);
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.loadUrl("$TARGET_URL");
+                  setContentView(webView);
+              }
+          }
+          EOF
+
+          # Buat ikon placeholder sederhana agar gradle tidak error saat cari mipmap
+          echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#000" android:pathData="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2Z"/></vector>' > app/src/main/res/mipmap-hdpi/ic_launcher.xml
+          cp app/src/main/res/mipmap-hdpi/ic_launcher.xml app/src/main/res/mipmap-hdpi/ic_launcher_round.xml
+
+      - name: Kompilasi APK (Gradle Build)
         run: |
-          cd engine-app/android
-          chmod +x gradlew
-          # Tambahan --no-daemon untuk mencegah memory crash di GitHub Actions
+          cd native-app
+          chmod +x gradlew || gradle wrapper
           ./gradlew assembleRelease --no-daemon
 
       - name: Zipalign APK (Native Android SDK)
         run: |
-          cd engine-app/android/app/build/outputs/apk/release
+          cd native-app/app/build/outputs/apk/release
           $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 app-release-unsigned.apk app-aligned.apk
 
       - name: Generate Production Keystore
         run: |
-          cd engine-app/android/app/build/outputs/apk/release
+          cd native-app/app/build/outputs/apk/release
           keytool -genkey -v -keystore release.keystore -alias nexa_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=${{ github.event.inputs.app_name }}, OU=NexaBuild, O=Nexa, L=Jakarta, ST=Jakarta, C=ID"
 
       - name: Sign APK (Native Android SDK)
         run: |
-          cd engine-app/android/app/build/outputs/apk/release
+          cd native-app/app/build/outputs/apk/release
           $ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner sign --ks release.keystore --ks-key-alias nexa_alias --ks-pass pass:password --key-pass pass:password --out app-release.apk app-aligned.apk
 
       - name: Create Release & Upload APK
@@ -99,7 +180,7 @@ jobs:
         with:
           tag_name: "v${{ github.event.inputs.version_name }}-${{ github.run_id }}"
           name: "${{ github.event.inputs.app_name }} v${{ github.event.inputs.version_name }}"
-          body: "Automated Build WebView.\nTarget: ${{ github.event.inputs.target_url }}"
-          files: engine-app/android/app/build/outputs/apk/release/app-release.apk
+          body: "Build sukses sempurna!\nTarget URL: ${{ github.event.inputs.target_url }}"
+          files: native-app/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
